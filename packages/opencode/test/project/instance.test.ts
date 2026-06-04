@@ -1,6 +1,8 @@
 import { describe, expect } from "bun:test"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { Deferred, Effect, Fiber, Layer } from "effect"
+import fs from "fs/promises"
+import path from "path"
 import { InstanceRef } from "../../src/effect/instance-ref"
 import { registerDisposer } from "../../src/effect/instance-registry"
 import { InstanceBootstrap } from "../../src/project/bootstrap-service"
@@ -43,6 +45,22 @@ describe("InstanceStore", () => {
       const ctx = yield* store.load({ directory: dir })
 
       expect(ctx.directory).toBe(dir)
+      expect(ctx.worktree).toBe(dir)
+    }),
+  )
+
+  it.live("preserves the requested symlink path in the instance context", () =>
+    Effect.gen(function* () {
+      if (process.platform === "win32") return
+      const dir = yield* tmpdirScoped({ git: true })
+      const link = path.join(path.dirname(dir), path.basename(dir) + "-symlink")
+      yield* Effect.promise(() => fs.symlink(dir, link))
+      yield* Effect.addFinalizer(() => Effect.promise(() => fs.rm(link, { force: true })).pipe(Effect.ignore))
+      const store = yield* InstanceStore.Service
+
+      const ctx = yield* store.load({ directory: link })
+
+      expect(ctx.directory).toBe(link)
       expect(ctx.worktree).toBe(dir)
     }),
   )

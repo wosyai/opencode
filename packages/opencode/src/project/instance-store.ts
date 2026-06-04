@@ -5,6 +5,7 @@ import { InstanceRef } from "@/effect/instance-ref"
 import { disposeInstance as runDisposers } from "@/effect/instance-registry"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Context, Deferred, Duration, Effect, Exit, Layer, Scope } from "effect"
+import path from "path"
 import { type InstanceContext } from "./instance-context"
 import { InstanceBootstrap } from "./bootstrap-service"
 import * as Project from "./project"
@@ -30,6 +31,10 @@ export const use = serviceUse(Service)
 
 interface Entry {
   readonly deferred: Deferred.Deferred<InstanceContext>
+}
+
+function preserveDirectory(input: string) {
+  return path.resolve(FSUtil.windowsPath(input))
 }
 
 export const layer: Layer.Layer<Service, never, Project.Service | InstanceBootstrap.Service> = Layer.effect(
@@ -69,7 +74,7 @@ export const layer: Layer.Layer<Service, never, Project.Service | InstanceBootst
 
     const completeLoad = (directory: string, input: LoadInput, entry: Entry) =>
       Effect.gen(function* () {
-        const exit = yield* Effect.exit(boot({ ...input, directory }))
+        const exit = yield* Effect.exit(boot({ ...input, directory: preserveDirectory(input.directory) }))
         if (Exit.isFailure(exit)) yield* removeEntry(directory, entry)
         yield* Deferred.done(entry.deferred, exit).pipe(Effect.asVoid)
       })
@@ -143,13 +148,14 @@ export const layer: Layer.Layer<Service, never, Project.Service | InstanceBootst
     }
 
     const dispose = Effect.fn("InstanceStore.dispose")(function* (ctx: InstanceContext) {
-      const entry = cache.get(ctx.directory)
+      const directory = FSUtil.resolve(ctx.directory)
+      const entry = cache.get(directory)
       if (!entry) return yield* disposeContext(ctx)
 
       const exit = yield* Deferred.await(entry.deferred).pipe(Effect.exit)
-      if (Exit.isFailure(exit)) return yield* removeEntry(ctx.directory, entry).pipe(Effect.asVoid)
+      if (Exit.isFailure(exit)) return yield* removeEntry(directory, entry).pipe(Effect.asVoid)
       if (exit.value !== ctx) return
-      yield* disposeEntry(ctx.directory, entry, ctx).pipe(Effect.asVoid)
+      yield* disposeEntry(directory, entry, ctx).pipe(Effect.asVoid)
     })
 
     const disposeDirectory = Effect.fn("InstanceStore.disposeDirectory")(function* (input: string) {

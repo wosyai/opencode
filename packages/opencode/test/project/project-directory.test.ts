@@ -45,6 +45,21 @@ describe("Project directory persistence", () => {
     }),
   )
 
+  it.live("stores the symlinked checkout path the user opened", () =>
+    Effect.gen(function* () {
+      if (process.platform === "win32") return
+      const tmp = yield* tmpdirScoped({ git: true })
+      const link = path.join(tmp, "..", path.basename(tmp) + "-link")
+      yield* Effect.promise(() => Bun.$`ln -s ${tmp} ${link}`.quiet())
+      yield* Effect.addFinalizer(() => Effect.promise(() => Bun.$`rm -f ${link}`.quiet().nothrow()).pipe(Effect.ignore))
+      const project = yield* Project.Service
+
+      const result = yield* project.fromDirectory(link)
+
+      expect(yield* directories(result.project.id)).toEqual([{ directory: link, type: "main" }])
+    }),
+  )
+
   it.live("stores a repeatedly opened checkout directory only once", () =>
     Effect.gen(function* () {
       const tmp = yield* tmpdirScoped({ git: true })

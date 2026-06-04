@@ -21,8 +21,13 @@ import { serviceUse } from "@opencode-ai/core/effect/service-use"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { EventV2 } from "@opencode-ai/core/event"
+import path from "path"
 
 const log = Log.create({ service: "project" })
+
+function preserveDirectory(input: string) {
+  return path.resolve(FSUtil.windowsPath(input))
+}
 
 const ProjectVcs = Schema.Literal("git")
 
@@ -222,7 +227,7 @@ export const layer = Layer.effect(
       directory: string
     }) {
       if (input.projectID === ProjectV2.ID.global) return
-      const opened = AbsolutePath.make(FSUtil.resolve(input.directory))
+      const opened = AbsolutePath.make(preserveDirectory(input.directory))
       const type = yield* projectCopy.detect({ directory: opened })
 
       yield* db
@@ -340,7 +345,7 @@ export const layer = Layer.effect(
 
       yield* saveProjectDirectory({
         projectID,
-        directory: data.directory,
+        directory,
       })
 
       yield* emitUpdated(result)
