@@ -29,8 +29,8 @@ import { createAutoScroll } from "@opencode-ai/ui/hooks"
 import { previewSelectedLines } from "@opencode-ai/ui/pierre/selection-bridge"
 import { Button } from "@opencode-ai/ui/button"
 import { showToast } from "@/utils/toast"
-import { checksum } from "@opencode-ai/core/util/encode"
-import { useLocation, useSearchParams } from "@solidjs/router"
+import { base64Encode, checksum } from "@opencode-ai/core/util/encode"
+import { useLocation, useNavigate, useSearchParams } from "@solidjs/router"
 import { NewSessionDesignView, NewSessionView, SessionHeader } from "@/components/session"
 import { useComments } from "@/context/comments"
 import { getSessionPrefetch, SESSION_PREFETCH_TTL } from "@/context/global-sync/session-prefetch"
@@ -196,6 +196,7 @@ export default function Page() {
   const terminal = useTerminal()
   const [searchParams, setSearchParams] = useSearchParams<{ prompt?: string }>()
   const location = useLocation()
+  const navigate = useNavigate()
   const { params, sessionKey, tabs, view } = useSessionLayout()
   const newSessionDesign = createMemo(() => settings.general.newLayoutDesigns())
 
@@ -336,8 +337,11 @@ export default function Page() {
   const visibleUserMessages = createMemo(
     () => {
       const revert = revertMessageID()
-      if (!revert) return userMessages()
-      return userMessages().filter((m) => m.id < revert)
+      const messages = userMessages()
+      if (!revert) return messages
+      const index = messages.findIndex((message) => message.id === revert)
+      if (index < 0) return messages
+      return messages.slice(0, index)
     },
     emptyUserMessages,
     {
@@ -1493,6 +1497,7 @@ export default function Page() {
         .then(() => sdk.client.session.revert(input))
         .then((result) => {
           if (result.data) merge(result.data)
+          void sync.session.diff(input.sessionID, { refresh: true })
         })
         .catch((err) => {
           batch(() => {
@@ -1534,6 +1539,7 @@ export default function Page() {
       await task
         .then((result) => {
           if (result.data) merge(result.data)
+          if (sessionID) void sync.session.diff(sessionID, { refresh: true })
         })
         .catch((err) => {
           batch(() => {
@@ -1566,7 +1572,24 @@ export default function Page() {
       .map((item) => ({ id: item.id, text: line(item.id) }))
   })
 
-  const actions = { revert }
+  const onForkFromMessage = async (input: { sessionID: string; messageID: string }) => {
+    const restored = draft(input.messageID)
+    const dir = base64Encode(sdk.directory)
+
+    try {
+      const forked = await sdk.client.session.fork({ sessionID: input.sessionID, messageID: input.messageID })
+      if (!forked.data) {
+        fail(new Error("Fork returned no data"))
+        return
+      }
+      prompt.set(restored, undefined, { dir, id: forked.data.id })
+      navigate(`/${dir}/session/${forked.data.id}`)
+    } catch (err) {
+      fail(err)
+    }
+  }
+
+  const actions = { fork: onForkFromMessage, revert }
 
   createEffect(() => {
     const sessionID = params.id

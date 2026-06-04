@@ -188,6 +188,7 @@ export const createDirSyncContext = (directory: string, serverSync: ReturnType<t
   const historyMessagePageSize = 200
   const inflight = new Map<string, Promise<void>>()
   const inflightDiff = new Map<string, Promise<void>>()
+  const inflightDiffVersion = new Map<string, number>()
   const inflightTodo = new Map<string, Promise<void>>()
   const optimistic = new Map<string, Map<string, OptimisticItem>>()
   const maxDirs = 30
@@ -504,18 +505,25 @@ export const createDirSyncContext = (directory: string, serverSync: ReturnType<t
           await Promise.all([sessionReq, messagesReq])
         })
       },
-      async diff(sessionID: string, opts?: { force?: boolean }) {
+      async diff(sessionID: string, input?: { force?: boolean; refresh?: boolean }) {
         const [store, setStore] = serverSync.child(directory)
         touch(directory, setStore, sessionID)
-        if (store.session_diff[sessionID] !== undefined && !opts?.force) return
+        if (!input?.force && !input?.refresh && store.session_diff[sessionID] !== undefined) return
 
         const key = keyFor(directory, sessionID)
-        return runInflight(inflightDiff, key, () =>
+        const version = (inflightDiffVersion.get(key) ?? 0) + 1
+        inflightDiffVersion.set(key, version)
+
+        const fetch = () =>
           retry(() => client.session.diff({ sessionID })).then((diff) => {
+            if (inflightDiffVersion.get(key) !== version) return
             if (!tracked(directory, sessionID)) return
             setStore("session_diff", sessionID, reconcile(list(diff.data), { key: "file" }))
-          }),
-        )
+          })
+
+        if (input?.refresh) return fetch()
+
+        return runInflight(inflightDiff, key, fetch)
       },
       async todo(sessionID: string, opts?: { force?: boolean }) {
         const [store, setStore] = serverSync.child(directory)

@@ -73,8 +73,18 @@ export const layer = Layer.effect(
       if (session.revert?.snapshot) yield* snap.restore(session.revert.snapshot)
       yield* snap.revert(patches)
       if (rev.snapshot) rev.diff = yield* snap.diff(rev.snapshot)
-      const range = all.filter((msg) => msg.info.id >= rev.messageID)
-      const diffs = yield* summary.computeDiff({ messages: range })
+      const pivotIdx = all.findIndex((msg) => msg.info.id === rev.messageID)
+      const preserved = all.flatMap((msg, idx) => {
+        if (pivotIdx < 0) return [msg]
+        if (idx < pivotIdx) return [msg]
+        if (idx > pivotIdx) return []
+        if (!rev.partID) return []
+
+        const partIdx = msg.parts.findIndex((item) => item.id === rev.partID)
+        if (partIdx < 0) return [msg]
+        return [{ ...msg, parts: msg.parts.slice(0, partIdx) }]
+      })
+      const diffs = yield* summary.computeDiff({ messages: preserved })
       yield* storage.write(["session_diff", input.sessionID], diffs).pipe(Effect.ignore)
       yield* events.publish(Session.Event.Diff, { sessionID: input.sessionID, diff: diffs })
       yield* sessions.setRevert({
@@ -104,11 +114,16 @@ export const layer = Layer.effect(
       const sessionID = session.id
       const msgs = yield* sessions.messages({ sessionID }).pipe(Effect.orDie)
       const messageID = session.revert.messageID
+      const pivot = msgs.findIndex((msg) => msg.info.id === messageID)
+      if (pivot < 0) {
+        yield* sessions.clearRevert(sessionID)
+        return
+      }
       const remove = [] as SessionV1.WithParts[]
       let target: SessionV1.WithParts | undefined
-      for (const msg of msgs) {
-        if (msg.info.id < messageID) continue
-        if (msg.info.id > messageID) {
+      for (const [index, msg] of msgs.entries()) {
+        if (index < pivot) continue
+        if (index > pivot) {
           remove.push(msg)
           continue
         }
