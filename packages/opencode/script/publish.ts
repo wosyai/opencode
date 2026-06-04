@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { $ } from "bun"
+import path from "path"
 import pkg from "../package.json"
 import { Script } from "@opencode-ai/script"
 import { fileURLToPath } from "url"
@@ -23,40 +24,48 @@ async function publish(dir: string, name: string, version: string) {
   await $`npm publish *.tgz --access public --tag ${Script.channel}`.cwd(dir)
 }
 
+const scope = "@wosyai"
+const wrapperNpmName = `${scope}/opencode`
+const wrapperDir = "opencode"
+
 const binaries: Record<string, string> = {}
+const binaryDirs: Record<string, string> = {}
 for (const filepath of new Bun.Glob("*/package.json").scanSync({ cwd: "./dist" })) {
+  const dir = path.dirname(filepath)
   const pkg = await Bun.file(`./dist/${filepath}`).json()
+  if (pkg.name === wrapperNpmName) continue
   binaries[pkg.name] = pkg.version
+  binaryDirs[pkg.name] = dir
 }
 console.log("binaries", binaries)
 const version = Object.values(binaries)[0]
 
-await $`mkdir -p ./dist/${pkg.name}`
-await $`mkdir -p ./dist/${pkg.name}/bin`
-await $`cp ./script/postinstall.mjs ./dist/${pkg.name}/postinstall.mjs`
-await Bun.file(`./dist/${pkg.name}/LICENSE`).write(await Bun.file("../../LICENSE").text())
-await Bun.file(`./dist/${pkg.name}/bin/${pkg.name}.exe`).write(
+await $`mkdir -p ./dist/${wrapperDir}`
+await $`mkdir -p ./dist/${wrapperDir}/bin`
+await $`cp ./script/postinstall.mjs ./dist/${wrapperDir}/postinstall.mjs`
+await Bun.file(`./dist/${wrapperDir}/LICENSE`).write(await Bun.file("../../LICENSE").text())
+await Bun.file(`./dist/${wrapperDir}/bin/opencode.exe`).write(
   [
-    `echo "Error: ${pkg.name}-ai's postinstall script was not run." >&2`,
+    `echo "Error: ${wrapperNpmName}'s postinstall script was not run." >&2`,
     'echo "" >&2',
     'echo "This occurs when using --ignore-scripts during installation, or when using a" >&2',
     'echo "package manager like pnpm that does not run postinstall scripts by default." >&2',
     'echo "" >&2',
     'echo "To fix this, run the postinstall script manually:" >&2',
-    `echo "  cd node_modules/${pkg.name}-ai && node postinstall.mjs" >&2`,
+    `echo "  cd node_modules/${wrapperNpmName} && node postinstall.mjs" >&2`,
     'echo "" >&2',
-    `echo "Or reinstall ${pkg.name}-ai without the --ignore-scripts flag." >&2`,
+    `echo "Or reinstall ${wrapperNpmName} without the --ignore-scripts flag." >&2`,
     "exit 1",
     "",
   ].join("\n"),
 )
 
-await Bun.file(`./dist/${pkg.name}/package.json`).write(
+await Bun.file(`./dist/${wrapperDir}/package.json`).write(
   JSON.stringify(
     {
-      name: pkg.name + "-ai",
+      name: wrapperNpmName,
       bin: {
-        [pkg.name]: `./bin/${pkg.name}.exe`,
+        opencode: "./bin/opencode.exe",
       },
       scripts: {
         postinstall: "node ./postinstall.mjs",
@@ -73,10 +82,11 @@ await Bun.file(`./dist/${pkg.name}/package.json`).write(
 )
 
 const tasks = Object.entries(binaries).map(async ([name]) => {
-  await publish(`./dist/${name}`, name, binaries[name])
+  const dir = binaryDirs[name]
+  await publish(`./dist/${dir}`, name, binaries[name])
 })
 await Promise.all(tasks)
-await publish(`./dist/${pkg.name}`, `${pkg.name}-ai`, version)
+await publish(`./dist/${wrapperDir}`, wrapperNpmName, version)
 
 const image = "ghcr.io/anomalyco/opencode"
 const platforms = "linux/amd64,linux/arm64"
