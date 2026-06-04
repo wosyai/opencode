@@ -134,7 +134,6 @@ export const layer = Layer.effect(
     const entry = Effect.fnUntraced(function* (absolute: string, selected = { directory: location.directory, root }) {
       const real = yield* fs.realPath(absolute).pipe(Effect.catch(() => Effect.void))
       if (!real) return
-      if (!FSUtil.contains(selected.root, real)) return
       const info = yield* fs.stat(real).pipe(Effect.catch(() => Effect.void))
       if (!info) return
       const type = info.type === "Directory" ? "directory" : info.type === "File" ? "file" : undefined
