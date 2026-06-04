@@ -109,7 +109,7 @@ export const layer: Layer.Layer<Service, never, Project.Service | InstanceBootst
     })
 
     const load = (input: LoadInput): Effect.Effect<InstanceContext> => {
-      const directory = FSUtil.resolve(input.directory)
+      const directory = preserveDirectory(input.directory)
       return Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
           const existing = cache.get(directory)
@@ -127,7 +127,7 @@ export const layer: Layer.Layer<Service, never, Project.Service | InstanceBootst
     }
 
     const reload = (input: LoadInput): Effect.Effect<InstanceContext> => {
-      const directory = FSUtil.resolve(input.directory)
+      const directory = preserveDirectory(input.directory)
       return Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
           const previous = cache.get(directory)
@@ -148,7 +148,7 @@ export const layer: Layer.Layer<Service, never, Project.Service | InstanceBootst
     }
 
     const dispose = Effect.fn("InstanceStore.dispose")(function* (ctx: InstanceContext) {
-      const directory = FSUtil.resolve(ctx.directory)
+      const directory = preserveDirectory(ctx.directory)
       const entry = cache.get(directory)
       if (!entry) return yield* disposeContext(ctx)
 
@@ -159,7 +159,7 @@ export const layer: Layer.Layer<Service, never, Project.Service | InstanceBootst
     })
 
     const disposeDirectory = Effect.fn("InstanceStore.disposeDirectory")(function* (input: string) {
-      const directory = FSUtil.resolve(input)
+      const directory = preserveDirectory(input)
       const entry = cache.get(directory)
       if (!entry) return
       const exit = yield* Deferred.await(entry.deferred).pipe(Effect.exit)

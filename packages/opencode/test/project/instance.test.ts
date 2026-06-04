@@ -65,6 +65,24 @@ describe("InstanceStore", () => {
     }),
   )
 
+  it.live("treats a symlink path and its real path as separate instance contexts", () =>
+    Effect.gen(function* () {
+      if (process.platform === "win32") return
+      const dir = yield* tmpdirScoped({ git: true })
+      const link = path.join(path.dirname(dir), path.basename(dir) + "-alias")
+      yield* Effect.promise(() => fs.symlink(dir, link))
+      yield* Effect.addFinalizer(() => Effect.promise(() => fs.rm(link, { force: true })).pipe(Effect.ignore))
+      const store = yield* InstanceStore.Service
+
+      const aliased = yield* store.load({ directory: link })
+      const real = yield* store.load({ directory: dir })
+
+      expect(aliased.directory).toBe(link)
+      expect(real.directory).toBe(dir)
+      expect(aliased).not.toBe(real)
+    }),
+  )
+
   it.live("runs bootstrap with InstanceRef provided", () =>
     Effect.gen(function* () {
       const dir = yield* tmpdirScoped({ git: true })
