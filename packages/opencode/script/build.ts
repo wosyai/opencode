@@ -26,6 +26,7 @@ const skipInstall = process.argv.includes("--skip-install")
 const sourcemapsFlag = process.argv.includes("--sourcemaps")
 const plugin = createSolidTransformPlugin()
 const skipEmbedWebUi = process.argv.includes("--skip-embed-web-ui")
+const targetFilter = process.env.OPENCODE_TARGETS?.split(",").filter(Boolean)
 
 const createEmbeddedWebUIBundle = async () => {
   console.log(`Building Web UI to embed in the binary`)
@@ -116,6 +117,18 @@ const allTargets: {
   },
 ]
 
+function targetName(item: (typeof allTargets)[number]) {
+  return [
+    base,
+    item.os === "win32" ? "windows" : item.os,
+    item.arch,
+    item.avx2 === false ? "baseline" : undefined,
+    item.abi === undefined ? undefined : item.abi,
+  ]
+    .filter(Boolean)
+    .join("-")
+}
+
 const targets = singleFlag
   ? allTargets.filter((item) => {
       if (item.os !== process.platform || item.arch !== process.arch) {
@@ -137,6 +150,8 @@ const targets = singleFlag
     })
   : allTargets
 
+const selectedTargets = targetFilter ? targets.filter((item) => targetFilter.includes(targetName(item))) : targets
+
 await $`rm -rf dist`
 
 const binaries: Record<string, string> = {}
@@ -144,17 +159,8 @@ if (!skipInstall) {
   await $`bun install --os="*" --cpu="*" @opentui/core@${pkg.dependencies["@opentui/core"]}`
   await $`bun install --os="*" --cpu="*" @parcel/watcher@${pkg.dependencies["@parcel/watcher"]}`
 }
-for (const item of targets) {
-  const dirName = [
-    base,
-    // changing to win32 flags npm for some reason
-    item.os === "win32" ? "windows" : item.os,
-    item.arch,
-    item.avx2 === false ? "baseline" : undefined,
-    item.abi === undefined ? undefined : item.abi,
-  ]
-    .filter(Boolean)
-    .join("-")
+for (const item of selectedTargets) {
+  const dirName = targetName(item)
   const npmName = `${scope}/${dirName}`
   console.log(`building ${npmName}`)
   await $`mkdir -p dist/${dirName}/bin`
