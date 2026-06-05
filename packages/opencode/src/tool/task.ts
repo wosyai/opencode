@@ -18,6 +18,7 @@ import { Database } from "@opencode-ai/core/database/database"
 export interface TaskPromptOps {
   cancel(sessionID: SessionID): Effect.Effect<void>
   resolvePromptParts(template: string): Effect.Effect<SessionPrompt.PromptInput["parts"]>
+  resolveSystemOverride(sessionID: SessionID, messageID: MessageID): Effect.Effect<string>
   prompt(input: SessionPrompt.PromptInput): Effect.Effect<SessionV1.WithParts>
 }
 
@@ -199,6 +200,10 @@ export const TaskTool = Tool.define(
       if (!ops) return yield* Effect.fail(new Error("TaskTool requires promptOps in ctx.extra"))
 
       const runTask = Effect.fn("TaskTool.runTask")(function* () {
+        const systemOverride =
+          !session && params.include_history === true
+            ? yield* ops.resolveSystemOverride(ctx.sessionID, ctx.messageID)
+            : undefined
         if (!session && params.include_history === true) {
           yield* sessions.importHistory({
             sourceSessionID: ctx.sessionID,
@@ -207,6 +212,22 @@ export const TaskTool = Tool.define(
           })
         }
         const parts = yield* ops.resolvePromptParts(params.prompt)
+        const withSubagentPrompt =
+          params.include_history === true
+            ? [
+                {
+                  type: "text" as const,
+                  synthetic: true,
+                  text: [
+                    "<system-reminder>",
+                    `You are now acting as the @${next.name} subagent.`,
+                    ...(next.prompt ? [next.prompt] : []),
+                    "</system-reminder>",
+                  ].join("\n"),
+                },
+                ...parts,
+              ]
+            : parts
         const result = yield* ops.prompt({
           messageID: MessageID.ascending(),
           sessionID: nextSession.id,
@@ -216,12 +237,13 @@ export const TaskTool = Tool.define(
           },
           variant: next.model ? undefined : variant,
           agent: next.name,
+          systemOverride,
           tools: {
             ...(next.permission.some((rule) => rule.permission === "todowrite") ? {} : { todowrite: false }),
             ...(next.permission.some((rule) => rule.permission === id) ? {} : { task: false }),
             ...Object.fromEntries((cfg.experimental?.primary_tools ?? []).map((item) => [item, false])),
           },
-          parts,
+          parts: withSubagentPrompt,
         })
         return result.parts.findLast((item) => item.type === "text")?.text ?? ""
       })

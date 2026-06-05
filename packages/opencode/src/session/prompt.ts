@@ -135,8 +135,39 @@ export const layer = Layer.effect(
       return {
         cancel: (sessionID: SessionID) => cancel(sessionID),
         resolvePromptParts: (template: string) => resolvePromptParts(template),
+        resolveSystemOverride: (sessionID: SessionID, messageID: MessageID) =>
+          resolveSystemOverride(sessionID, messageID).pipe(Effect.catch(Effect.die)),
         prompt: (input: PromptInput) => prompt(input).pipe(Effect.catch(Effect.die)),
       } satisfies TaskPromptOps
+    })
+
+    const resolveSystemOverride = Effect.fn("SessionPrompt.resolveSystemOverride")(function* (
+      sessionID: SessionID,
+      messageID: MessageID,
+    ) {
+      const history = yield* sessions.messages({ sessionID }).pipe(Effect.orDie)
+      const boundary = history.findIndex((item) => item.info.id === messageID)
+      if (boundary === -1) return yield* Effect.fail(new Error(`Message not found in session history: ${messageID}`))
+      const lastUser = history.slice(0, boundary).findLast((item) => item.info.role === "user")
+      if (!lastUser || lastUser.info.role !== "user") {
+        return yield* Effect.fail(new Error(`No user message found before assistant message: ${messageID}`))
+      }
+      if (lastUser.info.systemOverride) return lastUser.info.systemOverride
+      const inheritedAgent = yield* agents.get(lastUser.info.agent)
+      const inheritedModel = yield* provider.getModel(lastUser.info.model.providerID, lastUser.info.model.modelID)
+      const skills = yield* sys.skills(inheritedAgent)
+      const env = yield* sys.environment(inheritedModel)
+      const instructions = yield* instruction.system().pipe(Effect.orDie)
+      const system = [
+        ...(inheritedAgent.prompt ? [inheritedAgent.prompt] : SystemPrompt.provider(inheritedModel)),
+        ...env,
+        ...instructions,
+        ...(skills ? [skills] : []),
+        ...(lastUser.info.system ? [lastUser.info.system] : []),
+      ]
+      const format = lastUser.info.format ?? { type: "text" as const }
+      if (format.type === "json_schema") system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
+      return system.join("\n")
     })
 
     const cancel = Effect.fn("SessionPrompt.cancel")(function* (sessionID: SessionID) {
@@ -731,6 +762,7 @@ export const layer = Layer.effect(
           modelID: model.modelID,
           variant,
         },
+        systemOverride: input.systemOverride,
         system: input.system,
         format: input.format,
       }
@@ -1686,6 +1718,7 @@ export const PromptInput = Schema.Struct({
   messageID: Schema.optional(MessageID),
   model: Schema.optional(ModelRef),
   agent: Schema.optional(Schema.String),
+  systemOverride: Schema.optional(Schema.String),
   noReply: Schema.optional(Schema.Boolean),
   tools: Schema.optional(Schema.Record(Schema.String, Schema.Boolean)).annotate({
     description:

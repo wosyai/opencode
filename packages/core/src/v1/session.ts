@@ -345,6 +345,7 @@ export const User = Schema.Struct({
     modelID: ProviderV2.ModelID,
     variant: Schema.optional(Schema.String),
   }),
+  systemOverride: Schema.optional(Schema.String),
   system: Schema.optional(Schema.String),
   tools: Schema.optional(Schema.Record(Schema.String, Schema.Boolean)),
 }).annotate({ identifier: "UserMessage" })

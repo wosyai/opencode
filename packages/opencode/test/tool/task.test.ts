@@ -92,6 +92,7 @@ function stubOps(opts?: { onPrompt?: (input: SessionPrompt.PromptInput) => void;
   return {
     cancel: () => Effect.void,
     resolvePromptParts: (template) => Effect.succeed([{ type: "text" as const, text: template }]),
+    resolveSystemOverride: () => Effect.succeed(""),
     prompt: (input) =>
       Effect.sync(() => {
         opts?.onPrompt?.(input)
@@ -307,6 +308,7 @@ describe("tool.task", () => {
             cancelled.resolve(sessionID)
           }),
         resolvePromptParts: (template) => Effect.succeed([{ type: "text" as const, text: template }]),
+        resolveSystemOverride: () => Effect.succeed(""),
         prompt: (input) =>
           Effect.promise(() => {
             ready.resolve(input)
@@ -412,12 +414,14 @@ describe("tool.task", () => {
     Effect.gen(function* () {
       const sessions = yield* Session.Service
       const chat = yield* sessions.create({ title: "Parent" })
+      let seen: SessionPrompt.PromptInput | undefined
       const user = yield* sessions.updateMessage({
         id: MessageID.ascending(),
         role: "user",
         sessionID: chat.id,
         agent: "build",
         model: ref,
+        systemOverride: "parent system override",
         time: { created: Date.now() },
       })
       yield* sessions.updatePart({
@@ -465,6 +469,10 @@ describe("tool.task", () => {
       })
       const tool = yield* TaskTool
       const def = yield* tool.init()
+      const promptOps: TaskPromptOps = {
+        ...stubOps({ onPrompt: (input) => (seen = input) }),
+        resolveSystemOverride: () => Effect.succeed("parent system override"),
+      }
 
       const result = yield* def.execute(
         {
@@ -478,13 +486,16 @@ describe("tool.task", () => {
           messageID: current.id,
           agent: "build",
           abort: new AbortController().signal,
-          extra: { promptOps: stubOps() },
+          extra: { promptOps },
           messages: [],
           metadata: () => Effect.void,
           ask: () => Effect.void,
         },
       )
 
+      expect(seen?.systemOverride).toBe("parent system override")
+      expect(seen?.parts[0]).toMatchObject({ type: "text", synthetic: true })
+      if (seen?.parts[0]?.type === "text") expect(seen.parts[0].text).toContain("@general subagent")
       const inherited = yield* sessions.messages({ sessionID: result.metadata.sessionId })
       expect(inherited.map((item) => item.info.role)).toEqual(["user", "assistant"])
       expect(inherited[0]?.parts[0]).toMatchObject({ type: "text", text: "parent question" })
@@ -497,12 +508,14 @@ describe("tool.task", () => {
       const sessions = yield* Session.Service
       const root = yield* sessions.create({ title: "Root" })
       const child = yield* sessions.create({ parentID: root.id, title: "Child" })
+      let seen: SessionPrompt.PromptInput | undefined
       const user = yield* sessions.updateMessage({
         id: MessageID.ascending(),
         role: "user",
         sessionID: child.id,
         agent: "general",
         model: ref,
+        systemOverride: "inherited root system",
         time: { created: Date.now() },
       })
       yield* sessions.updatePart({
@@ -550,6 +563,10 @@ describe("tool.task", () => {
       })
       const tool = yield* TaskTool
       const def = yield* tool.init()
+      const promptOps: TaskPromptOps = {
+        ...stubOps({ onPrompt: (input) => (seen = input) }),
+        resolveSystemOverride: () => Effect.succeed("inherited root system"),
+      }
 
       const result = yield* def.execute(
         {
@@ -563,13 +580,14 @@ describe("tool.task", () => {
           messageID: current.id,
           agent: "general",
           abort: new AbortController().signal,
-          extra: { promptOps: stubOps() },
+          extra: { promptOps },
           messages: [],
           metadata: () => Effect.void,
           ask: () => Effect.void,
         },
       )
 
+      expect(seen?.systemOverride).toBe("inherited root system")
       const inherited = yield* sessions.messages({ sessionID: result.metadata.sessionId })
       expect(inherited.map((item) => item.info.role)).toEqual(["user", "assistant"])
       expect(inherited[0]?.parts[0]).toMatchObject({ type: "text", text: "child question" })
