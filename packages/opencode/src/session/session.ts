@@ -477,6 +477,11 @@ export interface Interface {
     workspaceID?: WorkspaceV2.ID
   }) => Effect.Effect<Info>
   readonly fork: (input: { sessionID: SessionID; messageID?: MessageID }) => Effect.Effect<Info, NotFound>
+  readonly importHistory: (input: {
+    sourceSessionID: SessionID
+    targetSessionID: SessionID
+    beforeMessageID: MessageID
+  }) => Effect.Effect<void, NotFound>
   readonly touch: (sessionID: SessionID) => Effect.Effect<void>
   readonly get: (id: SessionID) => Effect.Effect<Info, NotFound>
   readonly setTitle: (input: { sessionID: SessionID; title: string }) => Effect.Effect<void>
@@ -776,35 +781,28 @@ export const layer: Layer.Layer<
         metadata: structuredClone(original.metadata),
       })
       const msgs = yield* messages({ sessionID: input.sessionID })
-      const idMap = new Map<string, MessageID>()
-
-      for (const msg of msgs) {
-        if (input.messageID && msg.info.id === input.messageID) break
-        const newID = MessageID.ascending()
-        idMap.set(msg.info.id, newID)
-
-        const parentID = msg.info.role === "assistant" && msg.info.parentID ? idMap.get(msg.info.parentID) : undefined
-        const cloned = yield* updateMessage({
-          ...msg.info,
-          sessionID: session.id,
-          id: newID,
-          ...(parentID && { parentID }),
-        })
-
-        for (const part of msg.parts) {
-          const p: SessionV1.Part = {
-            ...part,
-            id: PartID.ascending(),
-            messageID: cloned.id,
-            sessionID: session.id,
-          }
-          if (p.type === "compaction" && p.tail_start_id) {
-            p.tail_start_id = idMap.get(p.tail_start_id)
-          }
-          yield* updatePart(p)
-        }
-      }
+      const copy = input.messageID ? msgs.slice(0, requireMessageIndex(msgs, input.messageID)) : msgs
+      yield* copyMessagesToSession({
+        sessionID: session.id,
+        messages: copy,
+        updateMessage,
+        updatePart,
+      })
       return session
+    })
+
+    const importHistory: Interface["importHistory"] = Effect.fn("Session.importHistory")(function* (input) {
+      const msgs = yield* messages({ sessionID: input.sourceSessionID })
+      const copy = msgs.slice(
+        historyImportStartIndex(msgs, input.beforeMessageID),
+        requireMessageIndex(msgs, input.beforeMessageID),
+      )
+      yield* copyMessagesToSession({
+        sessionID: input.targetSessionID,
+        messages: copy,
+        updateMessage,
+        updatePart,
+      })
     })
 
     const patch = (sessionID: SessionID, info: Patch) =>
@@ -981,6 +979,7 @@ export const layer: Layer.Layer<
       listGlobal,
       create,
       fork,
+      importHistory,
       touch,
       get,
       setTitle,
@@ -1158,3 +1157,63 @@ export function* listGlobal(input?: {
 }
 
 export * as Session from "./session"
+
+const copyMessagesToSession = Effect.fn("Session.copyMessagesToSession")(function* (input: {
+  sessionID: SessionID
+  messages: SessionV1.WithParts[]
+  updateMessage: Interface["updateMessage"]
+  updatePart: Interface["updatePart"]
+}) {
+  const idMap = new Map<string, MessageID>()
+
+  for (const msg of input.messages) {
+    const newID = MessageID.ascending()
+    idMap.set(msg.info.id, newID)
+
+    const parentID = msg.info.role === "assistant" && msg.info.parentID ? idMap.get(msg.info.parentID) : undefined
+    const cloned = yield* input.updateMessage({
+      ...msg.info,
+      sessionID: input.sessionID,
+      id: newID,
+      ...(parentID && { parentID }),
+    })
+
+    for (const part of msg.parts) {
+      const p: SessionV1.Part = {
+        ...part,
+        id: PartID.ascending(),
+        messageID: cloned.id,
+        sessionID: input.sessionID,
+      }
+      if (p.type === "compaction" && p.tail_start_id) {
+        const remapped = idMap.get(p.tail_start_id)
+        if (!remapped) throw new Error(`Compaction tail_start_id not found in copied history: ${p.tail_start_id}`)
+        p.tail_start_id = remapped
+      }
+      yield* input.updatePart(p)
+    }
+  }
+})
+
+function requireMessageIndex(messages: SessionV1.WithParts[], messageID: MessageID) {
+  const index = messages.findIndex((msg) => msg.info.id === messageID)
+  if (index === -1) throw new Error(`Message not found in session history: ${messageID}`)
+  return index
+}
+
+function historyImportStartIndex(messages: SessionV1.WithParts[], beforeMessageID: MessageID) {
+  const boundary = requireMessageIndex(messages, beforeMessageID)
+  const visible = MessageV2.filterCompacted(messages.slice(0, boundary).toReversed())
+  const first = visible[0]
+  if (!first || first.info.role !== "user") return 0
+  const compaction = first.parts.find((part): part is SessionV1.CompactionPart => part.type === "compaction")
+  if (!compaction) return 0
+  const compactionIndex = messages.findIndex((msg) => msg.info.id === first.info.id)
+  if (compactionIndex === -1) throw new Error(`Compaction boundary not found in session history: ${first.info.id}`)
+  if (!compaction.tail_start_id) return compactionIndex
+  const tailIndex = messages.findIndex((msg) => msg.info.id === compaction.tail_start_id)
+  if (tailIndex === -1 || tailIndex > compactionIndex) {
+    throw new Error(`Compaction tail_start_id not found in session history: ${compaction.tail_start_id}`)
+  }
+  return tailIndex
+}

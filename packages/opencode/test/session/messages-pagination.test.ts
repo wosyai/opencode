@@ -816,6 +816,91 @@ describe("MessageV2.filterCompacted", () => {
     }),
   )
 
+  it.instance("importHistory copies the active compaction tail into an existing session", () =>
+    Effect.gen(function* () {
+      const session = yield* SessionNs.Service
+      const created = yield* session.create({})
+      const target = yield* session.create({})
+
+      const u1 = yield* addUser(created.id, "first")
+      const a1 = yield* addAssistant(created.id, u1, { finish: "end_turn" })
+      yield* session.updatePart({
+        id: PartID.ascending(),
+        sessionID: created.id,
+        messageID: a1,
+        type: "text",
+        text: "first reply",
+      })
+
+      const u2 = yield* addUser(created.id, "second")
+      const a2 = yield* addAssistant(created.id, u2, { finish: "end_turn" })
+      yield* session.updatePart({
+        id: PartID.ascending(),
+        sessionID: created.id,
+        messageID: a2,
+        type: "text",
+        text: "second reply",
+      })
+
+      const c1 = yield* addUser(created.id)
+      yield* addCompactionPart(created.id, c1, u2)
+      const s1 = yield* addAssistant(created.id, c1, { summary: true, finish: "end_turn" })
+      yield* session.updatePart({
+        id: PartID.ascending(),
+        sessionID: created.id,
+        messageID: s1,
+        type: "text",
+        text: "summary",
+      })
+
+      const u3 = yield* addUser(created.id, "third")
+      const a3 = yield* addAssistant(created.id, u3, { finish: "end_turn" })
+      yield* session.updatePart({
+        id: PartID.ascending(),
+        sessionID: created.id,
+        messageID: a3,
+        type: "text",
+        text: "third reply",
+      })
+
+      const u4 = yield* addUser(created.id, "current turn")
+      const a4 = yield* addAssistant(created.id, u4)
+
+      const raw = yield* session.messages({ sessionID: created.id })
+      const boundary = raw.findIndex((msg) => msg.info.id === a4)
+      const parentFiltered = MessageV2.filterCompacted(raw.slice(0, boundary).toReversed())
+
+      yield* session.importHistory({
+        sourceSessionID: created.id,
+        targetSessionID: target.id,
+        beforeMessageID: a4,
+      })
+
+      const childFiltered = MessageV2.filterCompacted(yield* MessageV2.stream(target.id))
+      expect(
+        childFiltered.map((msg) => ({
+          role: msg.info.role,
+          summary: msg.info.role === "assistant" ? msg.info.summary === true : false,
+          parts: msg.parts.map((part) => (part.type === "text" ? part.text : part.type)),
+        })),
+      ).toEqual(
+        parentFiltered.map((msg) => ({
+          role: msg.info.role,
+          summary: msg.info.role === "assistant" ? msg.info.summary === true : false,
+          parts: msg.parts.map((part) => (part.type === "text" ? part.text : part.type)),
+        })),
+      )
+
+      const tailPart = childFiltered.flatMap((msg) => msg.parts).find((part) => part.type === "compaction")
+      expect(tailPart?.type).toBe("compaction")
+      if (!tailPart || tailPart.type !== "compaction") throw new Error("Expected imported compaction part")
+      expect(childFiltered.some((msg) => msg.info.id === tailPart.tail_start_id)).toBe(true)
+
+      yield* session.remove(target.id)
+      yield* session.remove(created.id)
+    }),
+  )
+
   it.instance("retains an assistant tail when compaction starts inside a turn", () =>
     withSession(({ session, sessionID }) =>
       Effect.gen(function* () {

@@ -37,6 +37,9 @@ const BaseParameterFields = {
   description: Schema.String.annotate({ description: "A short (3-5 words) description of the task" }),
   prompt: Schema.String.annotate({ description: "The task for the agent to perform" }),
   subagent_type: Schema.String.annotate({ description: "The type of specialized agent to use for this task" }),
+  include_history: Schema.optional(Schema.Boolean).annotate({
+    description: "Include the parent session history in the new subagent session. Defaults to false.",
+  }),
   task_id: Schema.optional(Schema.String).annotate({
     description:
       "This should only be set if you mean to resume a previous task (you can pass a prior task_id and the task will continue the same subagent session as before instead of creating a fresh one)",
@@ -141,9 +144,11 @@ export const TaskTool = Tool.define(
         return yield* Effect.fail(new Error(`Unknown agent type: ${params.subagent_type} is not a valid agent type`))
       }
 
-      const session = params.task_id
-        ? yield* sessions.get(SessionID.make(params.task_id)).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
-        : undefined
+      if (params.task_id && params.include_history === true) {
+        return yield* Effect.fail(new Error("include_history cannot be used when resuming an existing task_id"))
+      }
+
+      const session = params.task_id ? yield* sessions.get(SessionID.make(params.task_id)) : undefined
       const parent = yield* sessions.get(ctx.sessionID)
       const parentAgent = parent.agent
         ? yield* agent.get(parent.agent).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
@@ -194,6 +199,13 @@ export const TaskTool = Tool.define(
       if (!ops) return yield* Effect.fail(new Error("TaskTool requires promptOps in ctx.extra"))
 
       const runTask = Effect.fn("TaskTool.runTask")(function* () {
+        if (!session && params.include_history === true) {
+          yield* sessions.importHistory({
+            sourceSessionID: ctx.sessionID,
+            targetSessionID: nextSession.id,
+            beforeMessageID: ctx.messageID,
+          })
+        }
         const parts = yield* ops.resolvePromptParts(params.prompt)
         const result = yield* ops.prompt({
           messageID: MessageID.ascending(),
