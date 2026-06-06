@@ -160,6 +160,7 @@ export const TaskTool = Tool.define(
         (yield* sessions.create({
           parentID: ctx.sessionID,
           title: params.description + ` (@${next.name} subagent)`,
+          ...(params.include_history === true ? { metadata: { includeHistoryPreviousAgent: ctx.agent } } : {}),
           permission: [
             ...deriveSubagentSessionPermission({
               parentSessionPermission: parent.permission ?? [],

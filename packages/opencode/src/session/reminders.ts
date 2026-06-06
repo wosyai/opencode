@@ -15,6 +15,8 @@ const INCLUDE_HISTORY_REMINDER = [
   "</system-reminder>",
 ].join("\n")
 
+const INCLUDE_HISTORY_PREVIOUS_AGENT = "includeHistoryPreviousAgent"
+
 function reminderPart(input: { message: SessionV1.User; text: string }) {
   return {
     id: PartID.ascending(),
@@ -47,6 +49,7 @@ const reminderText = Effect.fn("SessionReminders.reminderText")(function* (input
   agent: Agent.Info
   session: Session.Info
 }) {
+  if (input.agent.native !== true) return input.agent.systemReminder?.text
   if (input.agent.systemReminder?.text !== undefined) {
     return yield* resolveText({ session: input.session, text: input.agent.systemReminder.text })
   }
@@ -72,16 +75,21 @@ export const apply = Effect.fn("SessionReminders.apply")(function* (input: {
   const userMessage = input.messages.findLast((msg) => msg.info.role === "user")
   if (!userMessage || userMessage.info.role !== "user") return input.messages
   const assistantMessage = input.messages.findLast((msg) => msg.info.role === "assistant")
+  const includeHistoryPreviousAgent =
+    typeof input.session.metadata?.[INCLUDE_HISTORY_PREVIOUS_AGENT] === "string"
+      ? input.session.metadata[INCLUDE_HISTORY_PREVIOUS_AGENT]
+      : undefined
   const enteringAgent = assistantMessage?.info.agent !== input.agent.name
   const text = yield* reminderText({ agent: input.agent, session: input.session })
   if ((enteringAgent || input.agent.systemReminder?.reapplyOnEveryTurn === true) && text !== undefined) {
     userMessage.parts.push(reminderPart({ message: userMessage.info, text }))
   }
 
-  if (assistantMessage?.info.agent) {
+  const previousAgent = includeHistoryPreviousAgent ?? assistantMessage?.info.agent
+  if (previousAgent) {
     const transition = yield* transitionText({
       agent: input.agent,
-      previousAgent: assistantMessage.info.agent,
+      previousAgent,
       session: input.session,
     })
     if (enteringAgent && transition !== undefined) {

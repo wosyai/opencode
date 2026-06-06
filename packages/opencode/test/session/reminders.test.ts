@@ -11,23 +11,25 @@ import type { Session } from "../../src/session/session"
 
 const it = testEffect(Layer.mergeAll(RuntimeFlags.layer({ experimentalPlanMode: false }), FSUtil.defaultLayer))
 
-function agent(input: { name: string; systemReminder?: Agent.Info["systemReminder"] }) {
+function agent(input: { name: string; native?: boolean; systemReminder?: Agent.Info["systemReminder"] }) {
   return {
     name: input.name,
     mode: "primary" as const,
+    native: input.native,
     permission: Permission.fromConfig({ "*": "allow" }),
     options: {},
     ...(input.systemReminder ? { systemReminder: input.systemReminder } : {}),
   } satisfies Agent.Info
 }
 
-function sessionInfo(): Session.Info {
+function sessionInfo(metadata?: Session.Info["metadata"]): Session.Info {
   return {
     id: "session_1" as Session.Info["id"],
     slug: "session-1",
     projectID: "project_1" as Session.Info["projectID"],
     directory: "/tmp",
     title: "Pinned",
+    metadata,
     version: "1",
     time: { created: 1, updated: 1 },
   } as Session.Info
@@ -159,6 +161,56 @@ describe("session reminders", () => {
       expect(reminder?.type).toBe("text")
       if (reminder?.type === "text") {
         expect(reminder.text).toContain("Your operational mode has changed from plan to build.")
+      }
+    }),
+  )
+
+  it.effect("prefers include_history parent agent for transition reminders", () =>
+    Effect.gen(function* () {
+      const messages = [assistantMessage("general"), userMessage("build")]
+      const result = yield* SessionReminders.apply({
+        messages,
+        agent: agent({
+          name: "build",
+          systemReminder: {
+            transitions: {
+              plan: "build transition from plan",
+              general: "build transition from general",
+            },
+          },
+        }),
+        session: sessionInfo({ includeHistoryPreviousAgent: "plan" }),
+      })
+
+      const user = result.findLast((message) => message.info.role === "user")
+      const reminder = user?.parts.at(-1)
+      expect(reminder?.type).toBe("text")
+      if (reminder?.type === "text") {
+        expect(reminder.text).toBe("build transition from plan")
+      }
+    }),
+  )
+
+  it.effect("does not resolve planInfo placeholders for custom agents", () =>
+    Effect.gen(function* () {
+      const messages = [userMessage("custom")]
+      const result = yield* SessionReminders.apply({
+        messages,
+        agent: agent({
+          name: "custom",
+          native: false,
+          systemReminder: {
+            text: "before ${planInfo} after",
+          },
+        }),
+        session: sessionInfo(),
+      })
+
+      const user = result.findLast((message) => message.info.role === "user")
+      const reminder = user?.parts.at(-1)
+      expect(reminder?.type).toBe("text")
+      if (reminder?.type === "text") {
+        expect(reminder.text).toBe("before ${planInfo} after")
       }
     }),
   )
