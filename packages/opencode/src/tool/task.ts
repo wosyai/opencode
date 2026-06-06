@@ -9,6 +9,7 @@ import { MessageV2 } from "../session/message-v2"
 import { Agent } from "../agent/agent"
 import { deriveSubagentSessionPermission } from "../agent/subagent-permissions"
 import type { SessionPrompt } from "../session/prompt"
+import { includeHistoryReminder } from "../session/reminders"
 import { Config } from "@/config/config"
 import { Effect, Exit, Schema, Scope } from "effect"
 import { EffectBridge } from "@/effect/bridge"
@@ -215,17 +216,12 @@ export const TaskTool = Tool.define(
         const withSubagentPrompt =
           params.include_history === true
             ? [
+                ...parts,
                 {
                   type: "text" as const,
                   synthetic: true,
-                  text: [
-                    "<system-reminder>",
-                    `You are now acting as the @${next.name} subagent.`,
-                    ...(next.prompt ? [next.prompt] : []),
-                    "</system-reminder>",
-                  ].join("\n"),
+                  text: includeHistoryReminder,
                 },
-                ...parts,
               ]
             : parts
         const result = yield* ops.prompt({

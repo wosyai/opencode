@@ -494,8 +494,11 @@ describe("tool.task", () => {
       )
 
       expect(seen?.systemOverride).toBe("parent system override")
-      expect(seen?.parts[0]).toMatchObject({ type: "text", synthetic: true })
-      if (seen?.parts[0]?.type === "text") expect(seen.parts[0].text).toContain("@general subagent")
+      const lastPart = seen?.parts.at(-1)
+      if (lastPart?.type === "text") {
+        expect(lastPart.synthetic).toBe(true)
+        expect(lastPart.text).toContain("include_history=true")
+      }
       const inherited = yield* sessions.messages({ sessionID: result.metadata.sessionId })
       expect(inherited.map((item) => item.info.role)).toEqual(["user", "assistant"])
       expect(inherited[0]?.parts[0]).toMatchObject({ type: "text", text: "parent question" })

@@ -69,6 +69,7 @@ it.instance("build agent has correct default properties", () =>
     expect(build?.native).toBe(true)
     expect(evalPerm(build, "edit")).toBe("allow")
     expect(evalPerm(build, "bash")).toBe("allow")
+    expect(build?.systemReminder?.transitions?.plan).toContain("Your operational mode has changed from plan to build.")
   }),
 )
 
@@ -91,6 +92,8 @@ it.instance("explore agent denies edit and write", () =>
     expect(evalPerm(explore, "edit")).toBe("deny")
     expect(evalPerm(explore, "write")).toBe("deny")
     expect(evalPerm(explore, "todowrite")).toBe("deny")
+    expect(explore?.prompt).toBeUndefined()
+    expect(explore?.systemReminder?.text).toContain("You are a file search specialist")
   }),
 )
 
@@ -168,6 +171,13 @@ it.instance(
       expect(custom?.topP).toBe(0.9)
       expect(custom?.native).toBe(false)
       expect(custom?.mode).toBe("all")
+      expect(custom?.systemReminder).toEqual({
+        text: "custom reminder",
+        reapplyOnEveryTurn: true,
+        transitions: {
+          build: "switched from build",
+        },
+      })
     }),
   {
     config: {
@@ -177,6 +187,13 @@ it.instance(
           description: "My custom agent",
           temperature: 0.5,
           top_p: 0.9,
+          system_reminder: {
+            text: "custom reminder",
+            reapply_on_every_turn: true,
+            transitions: {
+              build: "switched from build",
+            },
+          },
         },
       },
     },

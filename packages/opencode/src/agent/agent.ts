@@ -11,8 +11,11 @@ import { ProviderTransform } from "@/provider/transform"
 import PROMPT_GENERATE from "./generate.txt"
 import PROMPT_COMPACTION from "./prompt/compaction.txt"
 import PROMPT_EXPLORE from "./prompt/explore.txt"
+import PROMPT_PLAN from "@/session/prompt/plan.txt"
+import PLAN_MODE from "@/session/prompt/plan-mode.txt"
 import PROMPT_SUMMARY from "./prompt/summary.txt"
 import PROMPT_TITLE from "./prompt/title.txt"
+import BUILD_SWITCH from "@/session/prompt/build-switch.txt"
 import { Permission } from "@/permission"
 import { mergeDeep, pipe, sortBy, values } from "remeda"
 import { Global } from "@opencode-ai/core/global"
@@ -21,10 +24,17 @@ import { Plugin } from "@/plugin"
 import { Skill } from "../skill"
 import { Effect, Context, Layer, Schema } from "effect"
 import { InstanceState } from "@/effect/instance-state"
+import { RuntimeFlags } from "@/effect/runtime-flags"
 import * as Option from "effect/Option"
 import * as OtelTracer from "@effect/opentelemetry/Tracer"
 import { type DeepMutable } from "@opencode-ai/core/schema"
 import { ProviderV2 } from "@opencode-ai/core/provider"
+
+const SystemReminder = Schema.Struct({
+  text: Schema.optional(Schema.String),
+  reapplyOnEveryTurn: Schema.optional(Schema.Boolean),
+  transitions: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+})
 
 export const Info = Schema.Struct({
   name: Schema.String,
@@ -44,6 +54,7 @@ export const Info = Schema.Struct({
   ),
   variant: Schema.optional(Schema.String),
   prompt: Schema.optional(Schema.String),
+  systemReminder: Schema.optional(SystemReminder),
   options: Schema.Record(Schema.String, Schema.Unknown),
   steps: Schema.optional(Schema.Finite),
 }).annotate({ identifier: "Agent" })
@@ -87,6 +98,7 @@ export const layer = Layer.effect(
     const plugin = yield* Plugin.Service
     const skill = yield* Skill.Service
     const provider = yield* Provider.Service
+    const flags = yield* RuntimeFlags.Service
 
     const state = yield* InstanceState.make<State>(
       Effect.fn("Agent.state")(function* (ctx) {
@@ -128,6 +140,11 @@ export const layer = Layer.effect(
             name: "build",
             description: "The default agent. Executes tools based on configured permissions.",
             options: {},
+            systemReminder: {
+              transitions: {
+                plan: BUILD_SWITCH,
+              },
+            },
             permission: Permission.merge(
               defaults,
               Permission.fromConfig({
@@ -143,6 +160,10 @@ export const layer = Layer.effect(
             name: "plan",
             description: "Plan mode. Disallows all edit tools.",
             options: {},
+            systemReminder: {
+              text: flags.experimentalPlanMode ? PLAN_MODE : PROMPT_PLAN,
+              reapplyOnEveryTurn: true,
+            },
             permission: Permission.merge(
               defaults,
               Permission.fromConfig({
@@ -194,7 +215,9 @@ export const layer = Layer.effect(
               user,
             ),
             description: `Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns (eg. "src/components/**/*.tsx"), search code for keywords (eg. "API endpoints"), or answer questions about the codebase (eg. "how do API endpoints work?"). When calling this agent, specify the desired thoroughness level: "quick" for basic searches, "medium" for moderate exploration, or "very thorough" for comprehensive analysis across multiple locations and naming conventions.`,
-            prompt: PROMPT_EXPLORE,
+            systemReminder: {
+              text: PROMPT_EXPLORE,
+            },
             options: {},
             mode: "subagent",
             native: true,
@@ -264,6 +287,23 @@ export const layer = Layer.effect(
           if (value.model) item.model = Provider.parseModel(value.model)
           item.variant = value.variant ?? item.variant
           item.prompt = value.prompt ?? item.prompt
+          if (value.system_reminder) {
+            item.systemReminder = {
+              ...item.systemReminder,
+              ...(value.system_reminder.text !== undefined ? { text: value.system_reminder.text } : {}),
+              ...(value.system_reminder.reapply_on_every_turn !== undefined
+                ? { reapplyOnEveryTurn: value.system_reminder.reapply_on_every_turn }
+                : {}),
+              ...(value.system_reminder.transitions
+                ? {
+                    transitions: {
+                      ...item.systemReminder?.transitions,
+                      ...value.system_reminder.transitions,
+                    },
+                  }
+                : {}),
+            }
+          }
           item.description = value.description ?? item.description
           item.temperature = value.temperature ?? item.temperature
           item.topP = value.top_p ?? item.topP
@@ -427,6 +467,7 @@ export const defaultLayer = layer.pipe(
   Layer.provide(Auth.defaultLayer),
   Layer.provide(Config.defaultLayer),
   Layer.provide(Skill.defaultLayer),
+  Layer.provide(RuntimeFlags.defaultLayer),
 )
 
 export * as Agent from "./agent"

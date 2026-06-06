@@ -9,6 +9,12 @@ const Color = Schema.Union([
   Schema.Literals(["primary", "secondary", "accent", "success", "warning", "error", "info"]),
 ])
 
+const SystemReminder = Schema.Struct({
+  text: Schema.optional(Schema.String),
+  reapply_on_every_turn: Schema.optional(Schema.Boolean),
+  transitions: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+})
+
 const AgentSchema = Schema.StructWithRest(
   Schema.Struct({
     model: Schema.optional(Schema.String),
@@ -36,6 +42,7 @@ const AgentSchema = Schema.StructWithRest(
     }),
     maxSteps: Schema.optional(PositiveInt).annotate({ description: "@deprecated Use 'steps' field instead." }),
     permission: Schema.optional(ConfigPermissionV1.Info),
+    system_reminder: Schema.optional(SystemReminder),
   }),
   [Schema.Record(Schema.String, Schema.Any)],
 )
@@ -55,6 +62,7 @@ const KNOWN_KEYS = new Set([
   "maxSteps",
   "options",
   "permission",
+  "system_reminder",
   "disable",
   "tools",
 ])
