@@ -65,6 +65,52 @@ const transitionText = Effect.fn("SessionReminders.transitionText")(function* (i
   return configured
 })
 
+const contextPreviousAgent = Effect.fn("SessionReminders.contextPreviousAgent")(function* (input: {
+  messages: SessionV1.WithParts[]
+  agent: Agent.Info
+  session: Session.Info
+}) {
+  const includeHistoryPreviousAgent =
+    typeof input.session.metadata?.[INCLUDE_HISTORY_PREVIOUS_AGENT] === "string"
+      ? input.session.metadata[INCLUDE_HISTORY_PREVIOUS_AGENT]
+      : undefined
+  if (includeHistoryPreviousAgent) return includeHistoryPreviousAgent
+
+  let seenCurrent = false
+  for (let index = input.messages.length - 1; index >= 0; index--) {
+    const message = input.messages[index]
+    if (message?.info.role !== "user") continue
+    if (message.info.agent === input.agent.name) {
+      seenCurrent = true
+      continue
+    }
+    if (seenCurrent) return message.info.agent
+  }
+
+  return undefined
+})
+
+export const active = Effect.fn("SessionReminders.active")(function* (input: {
+  messages: SessionV1.WithParts[]
+  agent: Agent.Info
+  session: Session.Info
+}) {
+  const reminders = [] as string[]
+  const text = yield* reminderText({ agent: input.agent, session: input.session })
+  if (text !== undefined) reminders.push(text)
+
+  const previousAgent = yield* contextPreviousAgent(input)
+  if (!previousAgent) return reminders
+
+  const transition = yield* transitionText({
+    agent: input.agent,
+    previousAgent,
+    session: input.session,
+  })
+  if (transition !== undefined) reminders.push(transition)
+  return reminders
+})
+
 export const includeHistoryReminder = INCLUDE_HISTORY_REMINDER
 
 export const apply = Effect.fn("SessionReminders.apply")(function* (input: {
@@ -75,17 +121,15 @@ export const apply = Effect.fn("SessionReminders.apply")(function* (input: {
   const userMessage = input.messages.findLast((msg) => msg.info.role === "user")
   if (!userMessage || userMessage.info.role !== "user") return input.messages
   const assistantMessage = input.messages.findLast((msg) => msg.info.role === "assistant")
-  const includeHistoryPreviousAgent =
-    typeof input.session.metadata?.[INCLUDE_HISTORY_PREVIOUS_AGENT] === "string"
-      ? input.session.metadata[INCLUDE_HISTORY_PREVIOUS_AGENT]
-      : undefined
   const enteringAgent = assistantMessage?.info.agent !== input.agent.name
   const text = yield* reminderText({ agent: input.agent, session: input.session })
   if ((enteringAgent || input.agent.systemReminder?.reapplyOnEveryTurn === true) && text !== undefined) {
     userMessage.parts.push(reminderPart({ message: userMessage.info, text }))
   }
 
-  const previousAgent = includeHistoryPreviousAgent ?? assistantMessage?.info.agent
+  const previousAgent =
+    (yield* contextPreviousAgent({ messages: input.messages, agent: input.agent, session: input.session })) ??
+    assistantMessage?.info.agent
   if (previousAgent) {
     const transition = yield* transitionText({
       agent: input.agent,

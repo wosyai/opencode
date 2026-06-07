@@ -319,6 +319,10 @@ exports[`tool parameters JSON Schema (wire shape) task 1`] = `
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
+    "allow_subagents": {
+      "description": "Allow the spawned subagent to delegate subtasks to its own sub-subagents via the Task tool (default: false, requires the subagent to also have task permission in its config).",
+      "type": "boolean",
+    },
     "background": {
       "description": "Run the agent in the background. You will be notified when it completes.",
       "type": "boolean",
@@ -330,6 +334,10 @@ exports[`tool parameters JSON Schema (wire shape) task 1`] = `
     "description": {
       "description": "A short (3-5 words) description of the task",
       "type": "string",
+    },
+    "include_history": {
+      "description": "Include the parent session history in the new subagent session. Defaults to false.",
+      "type": "boolean",
     },
     "prompt": {
       "description": "The task for the agent to perform",

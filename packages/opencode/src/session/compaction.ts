@@ -22,6 +22,7 @@ import { EventV2Bridge } from "@/event-v2-bridge"
 import { SessionEvent } from "@opencode-ai/core/session/event"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { EventV2 } from "@opencode-ai/core/event"
+import { SessionReminders } from "./reminders"
 
 const log = Log.create({ service: "session.compaction" })
 
@@ -382,6 +383,7 @@ export const layer = Layer.effect(
       }
 
       const agent = yield* agents.get("compaction")
+      const activeAgent = yield* agents.get(userMessage.agent)
       const model = agent.model
         ? yield* provider.getModel(agent.model.providerID, agent.model.modelID).pipe(Effect.orDie)
         : yield* provider.getModel(userMessage.model.providerID, userMessage.model.modelID).pipe(Effect.orDie)
@@ -561,6 +563,23 @@ export const layer = Layer.effect(
 
       if (processor.message.error) return "stop"
       if (result === "continue") {
+        if (activeAgent) {
+          const reminders = yield* SessionReminders.active({
+            messages: history,
+            agent: activeAgent,
+            session: yield* session.get(input.sessionID).pipe(Effect.orDie),
+          })
+          for (const text of reminders) {
+            yield* session.updatePart({
+              id: PartID.ascending(),
+              messageID: msg.id,
+              sessionID: input.sessionID,
+              type: "text",
+              synthetic: true,
+              text,
+            })
+          }
+        }
         const summary = summaryText(
           (yield* session.messages({ sessionID: input.sessionID }).pipe(Effect.orDie)).find(
             (item) => item.info.id === msg.id,

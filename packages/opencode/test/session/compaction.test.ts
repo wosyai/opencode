@@ -90,14 +90,14 @@ function createModel(opts: {
 
 const wide = () => ProviderTest.fake({ model: createModel({ context: 100_000, output: 32_000 }) })
 
-function createUserMessage(sessionID: SessionID, text: string) {
+function createUserMessage(sessionID: SessionID, text: string, agent = "build") {
   return Effect.gen(function* () {
     const ssn = yield* SessionNs.Service
     const msg = yield* ssn.updateMessage({
       id: MessageID.ascending(),
       role: "user",
       sessionID,
-      agent: "build",
+      agent,
       model: ref,
       time: { created: Date.now() },
     })
@@ -112,14 +112,14 @@ function createUserMessage(sessionID: SessionID, text: string) {
   })
 }
 
-function createAssistantMessage(sessionID: SessionID, parentID: MessageID, root: string) {
+function createAssistantMessage(sessionID: SessionID, parentID: MessageID, root: string, agent = "build") {
   return SessionNs.Service.use((ssn) =>
     ssn.updateMessage({
       id: MessageID.ascending(),
       role: "assistant",
       sessionID,
-      mode: "build",
-      agent: "build",
+      mode: agent,
+      agent,
       path: { cwd: root, root },
       cost: 0,
       tokens: {
@@ -935,6 +935,44 @@ describe("session.compaction.process", () => {
         expect(last.parts[0].text).toContain("Continue if you have next steps")
       }
     }),
+  )
+
+  itCompaction.instance(
+    "preserves active transition reminders in compaction summary context",
+    (() => {
+      const llmStub = llm()
+      return Effect.gen(function* () {
+      llmStub.push(reply("summary"))
+      const ssn = yield* SessionNs.Service
+      const compact = yield* SessionCompaction.Service
+      const test = yield* TestInstance
+      const session = yield* ssn.create({})
+      const planUser = yield* createUserMessage(session.id, "plan work", "plan")
+      yield* createAssistantMessage(session.id, planUser.id, test.directory, "plan")
+      const buildUser = yield* createUserMessage(session.id, "build work", "build")
+      yield* createAssistantMessage(session.id, buildUser.id, test.directory, "build")
+      yield* createSummaryCompaction(session.id)
+
+      const messages = yield* ssn.messages({ sessionID: session.id })
+      const parentID = messages.at(-1)?.info.id
+      expect(parentID).toBeTruthy()
+      yield* compact.process({
+        parentID: parentID!,
+        messages,
+        sessionID: session.id,
+        auto: false,
+      })
+
+      const updated = yield* ssn.messages({ sessionID: session.id })
+      const summary = updated.findLast((message) => message.info.role === "assistant" && message.info.summary)
+      expect(summary?.info.role).toBe("assistant")
+      if (!summary || summary.info.role !== "assistant") return
+      const texts = summary.parts
+        .filter((part): part is SessionV1.TextPart => part.type === "text")
+        .map((part) => part.text)
+      expect(texts.some((text) => text.includes("Your operational mode has changed from plan to build."))).toBe(true)
+      }).pipe(withCompaction({ llm: llmStub.layer }))
+    })(),
   )
 
   itCompaction.instance(

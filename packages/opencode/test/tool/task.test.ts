@@ -614,6 +614,7 @@ describe("tool.task", () => {
             description: "inspect bug",
             prompt: "look into the cache key path",
             subagent_type: "reviewer",
+            allow_subagents: true,
           },
           {
             sessionID: chat.id,

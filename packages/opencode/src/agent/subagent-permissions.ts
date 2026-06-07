@@ -19,8 +19,9 @@ export function deriveSubagentSessionPermission(input: {
   parentSessionPermission: PermissionV1.Ruleset
   parentAgent: Agent.Info | undefined
   subagent: Agent.Info
+  allowSubagents?: boolean
 }): PermissionV1.Ruleset {
-  const canTask = input.subagent.permission.some((rule) => rule.permission === "task")
+  const canTask = input.allowSubagents === true && input.subagent.permission.some((rule) => rule.permission === "task")
   const canTodo = input.subagent.permission.some((rule) => rule.permission === "todowrite")
   const parentAgentDenies =
     input.parentAgent?.permission.filter((rule) => rule.action === "deny" && rule.permission === "edit") ?? []

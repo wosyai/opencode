@@ -47,6 +47,10 @@ const BaseParameterFields = {
       "This should only be set if you mean to resume a previous task (you can pass a prior task_id and the task will continue the same subagent session as before instead of creating a fresh one)",
   }),
   command: Schema.optional(Schema.String).annotate({ description: "The command that triggered this task" }),
+  allow_subagents: Schema.optional(Schema.Boolean).annotate({
+    description:
+      "Allow the spawned subagent to delegate subtasks to its own sub-subagents via the Task tool (default: false, requires the subagent to also have task permission in its config).",
+  }),
 }
 
 const BaseParameters = Schema.Struct(BaseParameterFields)
@@ -146,6 +150,8 @@ export const TaskTool = Tool.define(
         return yield* Effect.fail(new Error(`Unknown agent type: ${params.subagent_type} is not a valid agent type`))
       }
 
+      const canSpawnSubagents = params.allow_subagents === true && next.permission.some((rule) => rule.permission === id)
+
       if (params.task_id && params.include_history === true) {
         return yield* Effect.fail(new Error("include_history cannot be used when resuming an existing task_id"))
       }
@@ -166,6 +172,7 @@ export const TaskTool = Tool.define(
               parentSessionPermission: parent.permission ?? [],
               parentAgent,
               subagent: next,
+              allowSubagents: canSpawnSubagents,
             }),
             ...(cfg.experimental?.primary_tools?.map((item) => ({
               pattern: "*",
@@ -237,7 +244,7 @@ export const TaskTool = Tool.define(
           systemOverride,
           tools: {
             ...(next.permission.some((rule) => rule.permission === "todowrite") ? {} : { todowrite: false }),
-            ...(next.permission.some((rule) => rule.permission === id) ? {} : { task: false }),
+            ...(canSpawnSubagents ? {} : { task: false }),
             ...Object.fromEntries((cfg.experimental?.primary_tools ?? []).map((item) => [item, false])),
           },
           parts: withSubagentPrompt,

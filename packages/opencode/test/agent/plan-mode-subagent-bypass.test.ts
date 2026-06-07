@@ -177,6 +177,7 @@ it.effect("[#26700] controller self-restrictions do not erase executor permissio
         parentSessionPermission: [],
         parentAgent: controller,
         subagent: executor,
+        allowSubagents: true,
       }),
     )
 
