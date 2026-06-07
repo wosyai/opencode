@@ -33,6 +33,7 @@ import { TestConfig } from "../fixture/config"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { LLMEvent, Usage } from "@opencode-ai/llm"
 import { ProviderV2 } from "@opencode-ai/core/provider"
+import { FSUtil } from "@opencode-ai/core/fs-util"
 
 void Log.init({ print: false })
 
@@ -231,6 +232,7 @@ const deps = Layer.mergeAll(
   layer("continue"),
   Agent.defaultLayer,
   Plugin.defaultLayer,
+  FSUtil.defaultLayer,
   EventV2Bridge.defaultLayer,
   Config.defaultLayer,
   RuntimeFlags.layer({ experimentalEventSystem: true }),
@@ -281,6 +283,7 @@ function compactionProcessLayer(options?: CompactionProcessOptions) {
     : layer(options?.result ?? "continue")
   return Layer.mergeAll(SessionCompaction.layer.pipe(Layer.provide(processor)), processor, events, status).pipe(
     Layer.provide(SessionNs.defaultLayer),
+    Layer.provide(FSUtil.defaultLayer),
     Layer.provide((options?.provider ?? wide()).layer),
     Layer.provide(Snapshot.defaultLayer),
     Layer.provide(options?.llm ?? LLM.defaultLayer),
@@ -942,35 +945,35 @@ describe("session.compaction.process", () => {
     (() => {
       const llmStub = llm()
       return Effect.gen(function* () {
-      llmStub.push(reply("summary"))
-      const ssn = yield* SessionNs.Service
-      const compact = yield* SessionCompaction.Service
-      const test = yield* TestInstance
-      const session = yield* ssn.create({})
-      const planUser = yield* createUserMessage(session.id, "plan work", "plan")
-      yield* createAssistantMessage(session.id, planUser.id, test.directory, "plan")
-      const buildUser = yield* createUserMessage(session.id, "build work", "build")
-      yield* createAssistantMessage(session.id, buildUser.id, test.directory, "build")
-      yield* createSummaryCompaction(session.id)
+        llmStub.push(reply("summary"))
+        const ssn = yield* SessionNs.Service
+        const compact = yield* SessionCompaction.Service
+        const test = yield* TestInstance
+        const session = yield* ssn.create({})
+        const planUser = yield* createUserMessage(session.id, "plan work", "plan")
+        yield* createAssistantMessage(session.id, planUser.id, test.directory, "plan")
+        const buildUser = yield* createUserMessage(session.id, "build work", "build")
+        yield* createAssistantMessage(session.id, buildUser.id, test.directory, "build")
+        yield* createSummaryCompaction(session.id)
 
-      const messages = yield* ssn.messages({ sessionID: session.id })
-      const parentID = messages.at(-1)?.info.id
-      expect(parentID).toBeTruthy()
-      yield* compact.process({
-        parentID: parentID!,
-        messages,
-        sessionID: session.id,
-        auto: false,
-      })
+        const messages = yield* ssn.messages({ sessionID: session.id })
+        const parentID = messages.at(-1)?.info.id
+        expect(parentID).toBeTruthy()
+        yield* compact.process({
+          parentID: parentID!,
+          messages,
+          sessionID: session.id,
+          auto: false,
+        })
 
-      const updated = yield* ssn.messages({ sessionID: session.id })
-      const summary = updated.findLast((message) => message.info.role === "assistant" && message.info.summary)
-      expect(summary?.info.role).toBe("assistant")
-      if (!summary || summary.info.role !== "assistant") return
-      const texts = summary.parts
-        .filter((part): part is SessionV1.TextPart => part.type === "text")
-        .map((part) => part.text)
-      expect(texts.some((text) => text.includes("Your operational mode has changed from plan to build."))).toBe(true)
+        const updated = yield* ssn.messages({ sessionID: session.id })
+        const summary = updated.findLast((message) => message.info.role === "assistant" && message.info.summary)
+        expect(summary?.info.role).toBe("assistant")
+        if (!summary || summary.info.role !== "assistant") return
+        const texts = summary.parts
+          .filter((part): part is SessionV1.TextPart => part.type === "text")
+          .map((part) => part.text)
+        expect(texts.some((text) => text.includes("Your operational mode has changed from plan to build."))).toBe(true)
       }).pipe(withCompaction({ llm: llmStub.layer }))
     })(),
   )

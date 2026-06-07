@@ -18,6 +18,7 @@ import { Skill } from "@/skill"
 import { Agent } from "@/agent/agent"
 import { BackgroundJob } from "@/background/job"
 import { Session } from "@/session/session"
+import { SessionRevert } from "@/session/revert"
 import { SessionStatus } from "@/session/status"
 import { Provider } from "@/provider/provider"
 import { Git } from "@/git"
@@ -63,6 +64,9 @@ const registryLayer = (opts: RegistryLayerOptions = {}) =>
       Layer.provide(Reference.defaultLayer),
       Layer.provide(LSP.defaultLayer),
       Layer.provide(Instruction.defaultLayer),
+      Layer.provide(SessionRevert.defaultLayer),
+    )
+    .pipe(
       Layer.provide(FSUtil.defaultLayer),
       Layer.provide(EventV2Bridge.defaultLayer),
       Layer.provide(FetchHttpClient.layer),

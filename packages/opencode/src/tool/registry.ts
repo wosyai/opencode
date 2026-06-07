@@ -13,6 +13,8 @@ import { WebFetchTool } from "./webfetch"
 import { WriteTool } from "./write"
 import { InvalidTool } from "./invalid"
 import { SkillTool } from "./skill"
+import { UndoTool } from "./undo"
+import { RedoTool } from "./redo"
 import * as Tool from "./tool"
 import { Config } from "@/config/config"
 import { type ToolContext as PluginToolContext, type ToolDefinition } from "@opencode-ai/plugin"
@@ -42,6 +44,7 @@ import { Question } from "../question"
 import { Todo } from "../session/todo"
 import { LSP } from "@/lsp/lsp"
 import { Instruction } from "../session/instruction"
+import { SessionRevert } from "@/session/revert"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { Agent } from "../agent/agent"
@@ -96,6 +99,7 @@ export const layer: Layer.Layer<
   | Reference.Service
   | LSP.Service
   | Instruction.Service
+  | SessionRevert.Service
   | FSUtil.Service
   | EventV2Bridge.Service
   | HttpClient.HttpClient
@@ -131,6 +135,8 @@ export const layer: Layer.Layer<
     const greptool = yield* GrepTool
     const patchtool = yield* ApplyPatchTool
     const skilltool = yield* SkillTool
+    const undo = yield* UndoTool
+    const redo = yield* RedoTool
     const agent = yield* Agent.Service
 
     const state = yield* InstanceState.make<State>(
@@ -234,6 +240,8 @@ export const layer: Layer.Layer<
           todo: Tool.init(todo),
           search: Tool.init(websearch),
           skill: Tool.init(skilltool),
+          undo: Tool.init(undo),
+          redo: Tool.init(redo),
           patch: Tool.init(patchtool),
           question: Tool.init(question),
           lsp: Tool.init(lsptool),
@@ -256,6 +264,8 @@ export const layer: Layer.Layer<
             tool.todo,
             tool.search,
             tool.skill,
+            tool.undo,
+            tool.redo,
             tool.patch,
             ...(flags.experimentalLspTool ? [tool.lsp] : []),
             ...(flags.experimentalPlanMode && flags.client === "cli" ? [tool.plan] : []),
@@ -380,6 +390,7 @@ export const defaultLayer = Layer.suspend(() =>
       Layer.provide(Reference.defaultLayer),
       Layer.provide(LSP.defaultLayer),
       Layer.provide(Instruction.defaultLayer),
+      Layer.provide(SessionRevert.defaultLayer),
       Layer.provide(FSUtil.defaultLayer),
       Layer.provide(EventV2Bridge.defaultLayer),
       Layer.provide(FetchHttpClient.layer),

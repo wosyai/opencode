@@ -23,6 +23,8 @@ import { SessionEvent } from "@opencode-ai/core/session/event"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { EventV2 } from "@opencode-ai/core/event"
 import { SessionReminders } from "./reminders"
+import { InstanceRef } from "@/effect/instance-ref"
+import { FSUtil } from "@opencode-ai/core/fs-util"
 
 const log = Log.create({ service: "session.compaction" })
 
@@ -223,6 +225,7 @@ export const layer = Layer.effect(
     const provider = yield* Provider.Service
     const events = yield* EventV2Bridge.Service
     const flags = yield* RuntimeFlags.Service
+    const fsutil = yield* FSUtil.Service
 
     const isOverflow = Effect.fn("SessionCompaction.isOverflow")(function* (input: {
       tokens: SessionV1.Assistant["tokens"]
@@ -410,7 +413,7 @@ export const layer = Layer.effect(
         stripMedia: true,
         toolOutputMaxChars: TOOL_OUTPUT_MAX_CHARS,
       })
-      const ctx = yield* InstanceState.context
+      const instance = yield* InstanceState.context
       const msg: SessionV1.Assistant = {
         id: MessageID.ascending(),
         role: "assistant",
@@ -421,8 +424,8 @@ export const layer = Layer.effect(
         variant: userMessage.model.variant,
         summary: true,
         path: {
-          cwd: ctx.directory,
-          root: ctx.worktree,
+          cwd: instance.directory,
+          root: instance.worktree,
         },
         cost: 0,
         tokens: {
@@ -568,7 +571,7 @@ export const layer = Layer.effect(
             messages: history,
             agent: activeAgent,
             session: yield* session.get(input.sessionID).pipe(Effect.orDie),
-          })
+          }).pipe(Effect.provideService(FSUtil.Service, fsutil), Effect.provideService(InstanceRef, instance))
           for (const text of reminders) {
             yield* session.updatePart({
               id: PartID.ascending(),
@@ -644,6 +647,7 @@ export const layer = Layer.effect(
 
 export const defaultLayer = Layer.suspend(() =>
   layer.pipe(
+    Layer.provide(FSUtil.defaultLayer),
     Layer.provide(Provider.defaultLayer),
     Layer.provide(Session.defaultLayer),
     Layer.provide(SessionProcessor.defaultLayer),

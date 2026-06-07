@@ -599,7 +599,7 @@ describe("tool.task", () => {
   )
 
   it.instance(
-    "execute shapes child permissions for task, todowrite, and primary tools",
+    "execute shapes child permissions for task, undo, redo, todowrite, and primary tools",
     () =>
       Effect.gen(function* () {
         const sessions = yield* Session.Service
@@ -660,11 +660,88 @@ describe("tool.task", () => {
             mode: "subagent",
             permission: {
               task: "allow",
+              undo: "allow",
+              redo: "allow",
             },
           },
         },
         experimental: {
           primary_tools: ["bash", "read"],
+        },
+      },
+    },
+  )
+
+  it.instance(
+    "execute disables task, undo, and redo together when allow_subagents is omitted",
+    () =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const { chat, assistant } = yield* seed()
+        const tool = yield* TaskTool
+        const def = yield* tool.init()
+        let seen: SessionPrompt.PromptInput | undefined
+        const promptOps = stubOps({ onPrompt: (input) => (seen = input) })
+
+        const result = yield* def.execute(
+          {
+            description: "inspect bug",
+            prompt: "look into the cache key path",
+            subagent_type: "reviewer",
+          },
+          {
+            sessionID: chat.id,
+            messageID: assistant.id,
+            agent: "build",
+            abort: new AbortController().signal,
+            extra: { promptOps },
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          },
+        )
+
+        const child = yield* sessions.get(result.metadata.sessionId)
+        expect(child.permission).toEqual([
+          {
+            permission: "todowrite",
+            pattern: "*",
+            action: "deny",
+          },
+          {
+            permission: "task",
+            pattern: "*",
+            action: "deny",
+          },
+          {
+            permission: "undo",
+            pattern: "*",
+            action: "deny",
+          },
+          {
+            permission: "redo",
+            pattern: "*",
+            action: "deny",
+          },
+        ])
+        expect(seen?.tools).toEqual({
+          todowrite: false,
+          task: false,
+          undo: false,
+          redo: false,
+        })
+      }),
+    {
+      config: {
+        agent: {
+          reviewer: {
+            mode: "subagent",
+            permission: {
+              task: "allow",
+              undo: "allow",
+              redo: "allow",
+            },
+          },
         },
       },
     },

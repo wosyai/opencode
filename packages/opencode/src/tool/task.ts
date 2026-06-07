@@ -150,7 +150,10 @@ export const TaskTool = Tool.define(
         return yield* Effect.fail(new Error(`Unknown agent type: ${params.subagent_type} is not a valid agent type`))
       }
 
-      const canSpawnSubagents = params.allow_subagents === true && next.permission.some((rule) => rule.permission === id)
+      const delegated = params.allow_subagents === true
+      const canSpawnSubagents = delegated && next.permission.some((rule) => rule.permission === id)
+      const canUndo = delegated && next.permission.some((rule) => rule.permission === "undo")
+      const canRedo = delegated && next.permission.some((rule) => rule.permission === "redo")
 
       if (params.task_id && params.include_history === true) {
         return yield* Effect.fail(new Error("include_history cannot be used when resuming an existing task_id"))
@@ -245,6 +248,8 @@ export const TaskTool = Tool.define(
           tools: {
             ...(next.permission.some((rule) => rule.permission === "todowrite") ? {} : { todowrite: false }),
             ...(canSpawnSubagents ? {} : { task: false }),
+            ...(canUndo ? {} : { undo: false }),
+            ...(canRedo ? {} : { redo: false }),
             ...Object.fromEntries((cfg.experimental?.primary_tools ?? []).map((item) => [item, false])),
           },
           parts: withSubagentPrompt,

@@ -117,6 +117,8 @@ export const layer = Layer.effect(
         const defaults = Permission.fromConfig({
           "*": "allow",
           doom_loop: "ask",
+          undo: "deny",
+          redo: "deny",
           external_directory: {
             "*": "ask",
             ...Object.fromEntries(whitelistedDirs.map((dir) => [dir, "allow"])),
@@ -162,7 +164,7 @@ export const layer = Layer.effect(
             options: {},
             systemReminder: {
               text: flags.experimentalPlanMode ? PLAN_MODE : PROMPT_PLAN,
-              reapplyOnEveryTurn: true,
+              reapplyOnEveryTurn: flags.experimentalPlanMode ? false : true,
             },
             permission: Permission.merge(
               defaults,

@@ -212,3 +212,51 @@ it.effect("subagent inherits parent session deny rules as hard runtime ceilings"
     expect(Permission.evaluate("bash", "git status", effective).action).toBe("deny")
   }),
 )
+
+it.effect("subagent only receives task, undo, and redo when delegation is explicit", () =>
+  Effect.sync(() => {
+    const executor = testAgent({
+      name: "executor",
+      mode: "subagent",
+      permission: {
+        task: "allow",
+        undo: "allow",
+        redo: "allow",
+      },
+    })
+
+    const delegated = Permission.merge(
+      executor.permission,
+      deriveSubagentSessionPermission({
+        parentSessionPermission: [],
+        parentAgent: undefined,
+        subagent: executor,
+        allowSubagents: true,
+      }),
+    )
+    expect(Permission.evaluate("task", "worker", delegated).action).toBe("allow")
+    expect(Permission.evaluate("undo", "worker", delegated).action).toBe("allow")
+    expect(Permission.evaluate("redo", "worker", delegated).action).toBe("allow")
+
+    const blocked = Permission.merge(
+      executor.permission,
+      deriveSubagentSessionPermission({
+        parentSessionPermission: [],
+        parentAgent: undefined,
+        subagent: executor,
+      }),
+    )
+    expect(Permission.evaluate("task", "worker", blocked).action).toBe("deny")
+    expect(Permission.evaluate("undo", "worker", blocked).action).toBe("deny")
+    expect(Permission.evaluate("redo", "worker", blocked).action).toBe("deny")
+  }),
+)
+
+it.instance("general subagent denies undo and redo by default", () =>
+  Effect.gen(function* () {
+    const general = yield* Agent.use.get("general")
+    expect(general).toBeDefined()
+    expect(Permission.evaluate("undo", "general", general!.permission).action).toBe("deny")
+    expect(Permission.evaluate("redo", "general", general!.permission).action).toBe("deny")
+  }),
+)

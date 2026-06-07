@@ -1,0 +1,5 @@
+Undo messages and file changes of a task session.
+
+It does not revert only the last message, it does not stack up. Use once per task_id.
+
+It does not revert file changes on gitignored files or files outside the current main folder.
