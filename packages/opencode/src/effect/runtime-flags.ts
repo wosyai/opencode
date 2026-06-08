@@ -28,11 +28,7 @@ export class Service extends ConfigService.Service<Service>()("@opencode/Runtime
     broad: bool("OPENCODE_DISABLE_CLAUDE_CODE"),
     direct: bool("OPENCODE_DISABLE_CLAUDE_CODE_SKILLS"),
   }).pipe(Config.map((flags) => flags.broad || flags.direct)),
-  enableExa: Config.all({
-    experimental,
-    enabled: bool("OPENCODE_ENABLE_EXA"),
-    legacy: bool("OPENCODE_EXPERIMENTAL_EXA"),
-  }).pipe(Config.map((flags) => flags.experimental || flags.enabled || flags.legacy)),
+  enableExa: Config.boolean("OPENCODE_ENABLE_EXA").pipe(Config.withDefault(true)),
   enableParallel: Config.all({
     enabled: bool("OPENCODE_ENABLE_PARALLEL"),
     legacy: bool("OPENCODE_EXPERIMENTAL_PARALLEL"),

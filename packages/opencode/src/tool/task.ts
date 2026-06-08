@@ -62,8 +62,14 @@ export const Parameters = Schema.Struct({
   }),
 })
 
-function output(sessionID: SessionID, text: string) {
-  return [`<task id="${sessionID}" state="completed">`, "<task_result>", text, "</task_result>", "</task>"].join("\n")
+function output(sessionID: SessionID, text: string, compactions: number) {
+  return [
+    `<task id="${sessionID}" state="completed" compactions="${compactions}">`,
+    "<task_result>",
+    text,
+    "</task_result>",
+    "</task>",
+  ].join("\n")
 }
 
 function backgroundOutput(sessionID: SessionID) {
@@ -108,6 +114,28 @@ function backgroundMessage(input: {
     `</${tag}>`,
     "</task>",
   ].join("\n")
+}
+
+function countCompletedCompactions(messages: SessionV1.WithParts[], promptMessageID: MessageID) {
+  const compactions = new Set(
+    messages
+      .filter(
+        (msg) =>
+          msg.info.role === "user" &&
+          msg.info.id > promptMessageID &&
+          msg.parts.some((part): part is SessionV1.CompactionPart => part.type === "compaction"),
+      )
+      .map((msg) => msg.info.id),
+  )
+
+  return messages.filter(
+    (msg) =>
+      msg.info.role === "assistant" &&
+      msg.info.summary === true &&
+      !!msg.info.finish &&
+      !msg.info.error &&
+      compactions.has(msg.info.parentID),
+  ).length
 }
 
 export const TaskTool = Tool.define(
@@ -235,8 +263,9 @@ export const TaskTool = Tool.define(
                 },
               ]
             : parts
+        const promptMessageID = MessageID.ascending()
         const result = yield* ops.prompt({
-          messageID: MessageID.ascending(),
+          messageID: promptMessageID,
           sessionID: nextSession.id,
           model: {
             modelID: model.modelID,
@@ -254,7 +283,11 @@ export const TaskTool = Tool.define(
           },
           parts: withSubagentPrompt,
         })
-        return result.parts.findLast((item) => item.type === "text")?.text ?? ""
+        const messages = yield* sessions.messages({ sessionID: nextSession.id }).pipe(Effect.orDie)
+        return {
+          compactions: countCompletedCompactions(messages, promptMessageID),
+          text: result.parts.findLast((item) => item.type === "text")?.text ?? "",
+        }
       })
 
       const inject = Effect.fn("TaskTool.injectBackgroundResult")(function* (
@@ -283,7 +316,7 @@ export const TaskTool = Tool.define(
           .pipe(Effect.ignore, Effect.forkIn(scope, { startImmediately: true }))
       })
 
-      if (yield* background.extend({ id: nextSession.id, run: runTask() })) {
+      if (yield* background.extend({ id: nextSession.id, run: runTask().pipe(Effect.map((item) => item.text)) })) {
         return {
           title: params.description,
           metadata: {
@@ -301,7 +334,7 @@ export const TaskTool = Tool.define(
           type: id,
           title: params.description,
           metadata,
-          run: runTask(),
+          run: runTask().pipe(Effect.map((item) => item.text)),
         })
         yield* background.wait({ id: info.id }).pipe(
           Effect.flatMap((result) => {
@@ -335,11 +368,11 @@ export const TaskTool = Tool.define(
         }),
         () =>
           Effect.gen(function* () {
-            const text = yield* runTask()
+            const result = yield* runTask()
             return {
               title: params.description,
               metadata,
-              output: output(nextSession.id, text),
+              output: output(nextSession.id, result.text, result.compactions),
             }
           }),
         (_, exit) =>

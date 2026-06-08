@@ -131,6 +131,134 @@ function reply(input: SessionPrompt.PromptInput, text: string): SessionV1.WithPa
   }
 }
 
+function promptOpsWithCompletedCompactions(
+  sessions: Session.Interface,
+  input: { count: number; text?: string },
+): TaskPromptOps {
+  return {
+    cancel: () => Effect.void,
+    resolvePromptParts: (template) => Effect.succeed([{ type: "text" as const, text: template }]),
+    resolveSystemOverride: () => Effect.succeed(""),
+    prompt: (promptInput) =>
+      Effect.gen(function* () {
+        const user = yield* sessions.updateMessage({
+          id: promptInput.messageID ?? MessageID.ascending(),
+          role: "user",
+          sessionID: promptInput.sessionID,
+          agent: promptInput.agent ?? "general",
+          model: {
+            providerID: promptInput.model?.providerID ?? ref.providerID,
+            modelID: promptInput.model?.modelID ?? ref.modelID,
+          },
+          time: { created: Date.now() },
+        })
+        yield* sessions.updatePart({
+          id: PartID.ascending(),
+          messageID: user.id,
+          sessionID: user.sessionID,
+          type: "text",
+          text: promptInput.parts.find((part) => part.type === "text")?.text ?? "prompt",
+        })
+
+        for (let index = 0; index < input.count; index++) {
+          const compaction = yield* sessions.updateMessage({
+            id: MessageID.ascending(),
+            role: "user",
+            sessionID: promptInput.sessionID,
+            agent: promptInput.agent ?? "general",
+            model: {
+              providerID: promptInput.model?.providerID ?? ref.providerID,
+              modelID: promptInput.model?.modelID ?? ref.modelID,
+            },
+            time: { created: Date.now() },
+          })
+          yield* sessions.updatePart({
+            id: PartID.ascending(),
+            messageID: compaction.id,
+            sessionID: compaction.sessionID,
+            type: "compaction",
+            auto: true,
+          })
+          const summary = yield* sessions.updateMessage({
+            id: MessageID.ascending(),
+            role: "assistant",
+            parentID: compaction.id,
+            sessionID: promptInput.sessionID,
+            mode: "compaction",
+            agent: "compaction",
+            summary: true,
+            cost: 0,
+            path: { cwd: "/tmp", root: "/tmp" },
+            tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+            modelID: promptInput.model?.modelID ?? ref.modelID,
+            providerID: promptInput.model?.providerID ?? ref.providerID,
+            time: { created: Date.now() },
+            finish: "stop",
+          })
+          yield* sessions.updatePart({
+            id: PartID.ascending(),
+            messageID: summary.id,
+            sessionID: summary.sessionID,
+            type: "text",
+            text: `summary ${index + 1}`,
+          })
+        }
+
+        const result = reply(promptInput, input.text ?? "done")
+        yield* sessions.updateMessage(result.info)
+        for (const part of result.parts) {
+          yield* sessions.updatePart(part)
+        }
+        return result
+      }),
+  }
+}
+
+const seedCompletedCompaction = Effect.fn("TaskToolTest.seedCompletedCompaction")(function* (input: {
+  sessionID: SessionID
+  agent: string
+}) {
+  const sessions = yield* Session.Service
+  const compaction = yield* sessions.updateMessage({
+    id: MessageID.ascending(),
+    role: "user",
+    sessionID: input.sessionID,
+    agent: input.agent,
+    model: ref,
+    time: { created: Date.now() },
+  })
+  yield* sessions.updatePart({
+    id: PartID.ascending(),
+    messageID: compaction.id,
+    sessionID: compaction.sessionID,
+    type: "compaction",
+    auto: true,
+  })
+  const summary = yield* sessions.updateMessage({
+    id: MessageID.ascending(),
+    role: "assistant",
+    parentID: compaction.id,
+    sessionID: input.sessionID,
+    mode: "compaction",
+    agent: "compaction",
+    summary: true,
+    cost: 0,
+    path: { cwd: "/tmp", root: "/tmp" },
+    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    modelID: ref.modelID,
+    providerID: ref.providerID,
+    time: { created: Date.now() },
+    finish: "stop",
+  })
+  yield* sessions.updatePart({
+    id: PartID.ascending(),
+    messageID: summary.id,
+    sessionID: summary.sessionID,
+    type: "text",
+    text: "prior summary",
+  })
+})
+
 describe("tool.task", () => {
   it.instance(
     "description sorts subagents by name and is stable across calls",
@@ -242,9 +370,41 @@ describe("tool.task", () => {
       expect(kids).toHaveLength(1)
       expect(kids[0]?.id).toBe(child.id)
       expect(result.metadata.sessionId).toBe(child.id)
-      expect(result.output).toContain(`<task id="${child.id}" state="completed">`)
+      expect(result.output).toContain(`<task id="${child.id}" state="completed" compactions="0">`)
       expect(seen?.sessionID).toBe(child.id)
       expect(seen?.variant).toBe("xhigh")
+    }),
+  )
+
+  it.instance("execute counts only completed compactions from the current resumed task execution", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const { chat, assistant } = yield* seed()
+      const child = yield* sessions.create({ parentID: chat.id, title: "Existing child" })
+      yield* seedCompletedCompaction({ sessionID: child.id, agent: "general" })
+      const tool = yield* TaskTool
+      const def = yield* tool.init()
+
+      const result = yield* def.execute(
+        {
+          description: "inspect bug",
+          prompt: "look into the cache key path",
+          subagent_type: "general",
+          task_id: child.id,
+        },
+        {
+          sessionID: chat.id,
+          messageID: assistant.id,
+          agent: "build",
+          abort: new AbortController().signal,
+          extra: { promptOps: promptOpsWithCompletedCompactions(sessions, { count: 2, text: "resumed" }) },
+          messages: [],
+          metadata: () => Effect.void,
+          ask: () => Effect.void,
+        },
+      )
+
+      expect(result.output).toContain(`<task id="${child.id}" state="completed" compactions="2">`)
     }),
   )
 
@@ -503,6 +663,88 @@ describe("tool.task", () => {
       expect(inherited.map((item) => item.info.role)).toEqual(["user", "assistant"])
       expect(inherited[0]?.parts[0]).toMatchObject({ type: "text", text: "parent question" })
       expect(inherited[1]?.parts[0]).toMatchObject({ type: "text", text: "parent answer" })
+    }),
+  )
+
+  it.instance("execute ignores imported compactions when counting current include_history run", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const chat = yield* sessions.create({ title: "Parent" })
+      const user = yield* sessions.updateMessage({
+        id: MessageID.ascending(),
+        role: "user",
+        sessionID: chat.id,
+        agent: "build",
+        model: ref,
+        time: { created: Date.now() },
+      })
+      yield* sessions.updatePart({
+        id: PartID.ascending(),
+        messageID: user.id,
+        sessionID: chat.id,
+        type: "text",
+        text: "parent question",
+      })
+      const prior = yield* sessions.updateMessage({
+        id: MessageID.ascending(),
+        role: "assistant",
+        parentID: user.id,
+        sessionID: chat.id,
+        mode: "build",
+        agent: "build",
+        cost: 0,
+        path: { cwd: "/tmp", root: "/tmp" },
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        modelID: ref.modelID,
+        providerID: ref.providerID,
+        time: { created: Date.now() },
+        finish: "stop",
+      })
+      yield* sessions.updatePart({
+        id: PartID.ascending(),
+        messageID: prior.id,
+        sessionID: chat.id,
+        type: "text",
+        text: "parent answer",
+      })
+      yield* seedCompletedCompaction({ sessionID: chat.id, agent: "build" })
+      const current = yield* sessions.updateMessage({
+        id: MessageID.ascending(),
+        role: "assistant",
+        parentID: user.id,
+        sessionID: chat.id,
+        mode: "build",
+        agent: "build",
+        cost: 0,
+        path: { cwd: "/tmp", root: "/tmp" },
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        modelID: ref.modelID,
+        providerID: ref.providerID,
+        time: { created: Date.now() },
+      })
+      const tool = yield* TaskTool
+      const def = yield* tool.init()
+
+      const result = yield* def.execute(
+        {
+          description: "inspect bug",
+          prompt: "look into the cache key path",
+          subagent_type: "general",
+          include_history: true,
+        },
+        {
+          sessionID: chat.id,
+          messageID: current.id,
+          agent: "build",
+          abort: new AbortController().signal,
+          extra: { promptOps: promptOpsWithCompletedCompactions(sessions, { count: 1, text: "done" }) },
+          messages: [],
+          metadata: () => Effect.void,
+          ask: () => Effect.void,
+        },
+      )
+
+      expect(result.output).toContain(`state="completed" compactions="1"`)
     }),
   )
 
